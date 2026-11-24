@@ -150,7 +150,7 @@ fun CrawlerScreen(
                     )
                 }
 
-                // Max Pages slider (default 10, range 1-50)
+                // Max Pages slider (default 10, range 1-1000)
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -169,8 +169,7 @@ fun CrawlerScreen(
                     Slider(
                         value = formState.maxPages.toFloat(),
                         onValueChange = { onMaxPagesChange(it.roundToInt()) },
-                        valueRange = 1f..50f,
-                        steps = 48,
+                        valueRange = CrawlConfig.MIN_PAGES_LIMIT.toFloat()..CrawlConfig.MAX_PAGES_LIMIT.toFloat(),
                         enabled = !crawlState.isRunning
                     )
                 }

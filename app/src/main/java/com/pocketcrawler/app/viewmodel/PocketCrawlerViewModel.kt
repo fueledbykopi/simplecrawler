@@ -149,7 +149,9 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun updateMaxPages(maxPages: Int) {
-        _crawlerForm.update { it.copy(maxPages = maxPages.coerceIn(1, 50)) }
+        _crawlerForm.update {
+            it.copy(maxPages = maxPages.coerceIn(CrawlConfig.MIN_PAGES_LIMIT, CrawlConfig.MAX_PAGES_LIMIT))
+        }
     }
 
     fun updatePoliteDelaySeconds(seconds: Float) {

@@ -21,6 +21,8 @@ data class CrawlConfig(
     val timeoutMillis: Int = 12_000
 ) {
     companion object {
+        const val MIN_PAGES_LIMIT = 1
+        const val MAX_PAGES_LIMIT = 1000
         const val DEFAULT_SEED_PLACEHOLDER = "https://books.toscrape.com/"
         const val DEFAULT_USER_AGENT = "PocketCrawler/1.0 (Android Offline Indexer; +https://github.com/pocket-crawler)"
     }

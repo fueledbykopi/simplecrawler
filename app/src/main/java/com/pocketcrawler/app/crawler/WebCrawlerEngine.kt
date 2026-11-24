@@ -62,7 +62,7 @@ class WebCrawlerEngine(
         }
 
         val seedDomain = UrlNormalizer.extractHost(normalizedSeed)
-        val maxPages = config.maxPages.coerceIn(1, 50)
+        val maxPages = config.maxPages.coerceIn(CrawlConfig.MIN_PAGES_LIMIT, CrawlConfig.MAX_PAGES_LIMIT)
         val delayMs = (config.politeDelaySeconds.coerceIn(0f, 10f) * 1000f).toLong()
 
         activeJob = scope.launch {
