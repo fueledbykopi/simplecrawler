@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Subtle spider-web / graph rings -->
+    <path
+        android:strokeColor="#2DD4BF"
+        android:strokeWidth="1.6"
+        android:strokeAlpha="0.35"
+        android:pathData="M54,26 A28,28 0 1,1 53.9,26 Z" />
+    <path
+        android:strokeColor="#2DD4BF"
+        android:strokeWidth="1.4"
+        android:strokeAlpha="0.25"
+        android:pathData="M54,36 A18,18 0 1,1 53.9,36 Z" />
+    <!-- Graph spokes -->
+    <path
+        android:strokeColor="#2DD4BF"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.4"
+        android:pathData="M54,26 L54,82 M26,54 L82,54 M34,34 L74,74 M74,34 L34,74" />
+    <!-- Search lens ring -->
+    <path
+        android:strokeColor="#5EEAD4"
+        android:strokeWidth="4.2"
+        android:fillColor="#0D2235"
+        android:pathData="M49,33 A17,17 0 1,1 48.9,33 Z" />
+    <!-- Search handle -->
+    <path
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M62,63 L75,76" />
+    <!-- Center indexed node dot -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M49,45 A5,5 0 1,1 48.9,45 Z" />
+    <!-- Outer network node dots -->
+    <path
+        android:fillColor="#2DD4BF"
+        android:pathData="M34,31.5 A2.5,2.5 0 1,1 33.9,31.5 Z" />
+    <path
+        android:fillColor="#2DD4BF"
+        android:pathData="M74,31.5 A2.5,2.5 0 1,1 73.9,31.5 Z" />
+    <path
+        android:fillColor="#2DD4BF"
+        android:pathData="M34,71.5 A2.5,2.5 0 1,1 33.9,71.5 Z" />
+</vector>
