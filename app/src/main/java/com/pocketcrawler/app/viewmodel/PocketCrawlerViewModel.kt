@@ -28,7 +28,8 @@ enum class AppTab(val label: String) {
 
 data class CrawlerFormState(
     val seedUrl: String = "",
-    val maxPages: Int = 10,
+    val maxPages: Int = CrawlConfig.DEFAULT_MAX_PAGES,
+    val maxPagesInput: String = CrawlConfig.DEFAULT_MAX_PAGES.toString(),
     val politeDelaySeconds: Float = 1.0f
 )
 
@@ -149,8 +150,34 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun updateMaxPages(maxPages: Int) {
+        val valid = maxPages.coerceAtLeast(CrawlConfig.MIN_PAGES_LIMIT)
         _crawlerForm.update {
-            it.copy(maxPages = maxPages.coerceIn(CrawlConfig.MIN_PAGES_LIMIT, CrawlConfig.MAX_PAGES_LIMIT))
+            it.copy(
+                maxPages = valid,
+                maxPagesInput = valid.toString()
+            )
+        }
+    }
+
+    fun updateMaxPagesInput(rawInput: String) {
+        val sanitized = CrawlConfig.sanitizeMaxPagesInput(rawInput)
+        val parsed = CrawlConfig.parseCustomMaxPages(sanitized)
+        _crawlerForm.update { current ->
+            current.copy(
+                maxPages = parsed ?: current.maxPages,
+                maxPagesInput = sanitized
+            )
+        }
+    }
+
+    fun commitMaxPagesInput() {
+        _crawlerForm.update { current ->
+            val effective = CrawlConfig.parseCustomMaxPages(current.maxPagesInput)
+                ?: current.maxPages.coerceAtLeast(CrawlConfig.MIN_PAGES_LIMIT)
+            current.copy(
+                maxPages = effective,
+                maxPagesInput = effective.toString()
+            )
         }
     }
 
@@ -165,13 +192,21 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
         } else {
             val form = _crawlerForm.value
             val effectiveSeed = form.seedUrl.trim().ifEmpty { CrawlConfig.DEFAULT_SEED_PLACEHOLDER }
-            if (form.seedUrl.isBlank()) {
-                _crawlerForm.update { it.copy(seedUrl = effectiveSeed) }
+            val effectiveMaxPages = CrawlConfig.parseCustomMaxPages(form.maxPagesInput)
+                ?: form.maxPages.coerceAtLeast(CrawlConfig.MIN_PAGES_LIMIT)
+            if (form.seedUrl.isBlank() || form.maxPagesInput != effectiveMaxPages.toString()) {
+                _crawlerForm.update {
+                    it.copy(
+                        seedUrl = effectiveSeed,
+                        maxPages = effectiveMaxPages,
+                        maxPagesInput = effectiveMaxPages.toString()
+                    )
+                }
             }
             crawlerEngine.startCrawl(
                 CrawlConfig(
                     seedUrl = effectiveSeed,
-                    maxPages = form.maxPages,
+                    maxPages = effectiveMaxPages,
                     politeDelaySeconds = form.politeDelaySeconds
                 )
             )

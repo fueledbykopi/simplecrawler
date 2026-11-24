@@ -165,6 +165,8 @@ fun PocketCrawlerApp(viewModel: PocketCrawlerViewModel) {
                         indexedCount = indexedCount,
                         onSeedUrlChange = viewModel::updateSeedUrl,
                         onMaxPagesChange = viewModel::updateMaxPages,
+                        onMaxPagesInputChange = viewModel::updateMaxPagesInput,
+                        onCommitMaxPagesInput = viewModel::commitMaxPagesInput,
                         onPoliteDelayChange = viewModel::updatePoliteDelaySeconds,
                         onToggleStartStop = viewModel::toggleStartStopCrawl,
                         onRequestClearDatabase = { showClearDbDialog = true },

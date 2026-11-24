@@ -69,6 +69,8 @@ fun CrawlerScreen(
     indexedCount: Int,
     onSeedUrlChange: (String) -> Unit,
     onMaxPagesChange: (Int) -> Unit,
+    onMaxPagesInputChange: (String) -> Unit,
+    onCommitMaxPagesInput: () -> Unit,
     onPoliteDelayChange: (Float) -> Unit,
     onToggleStartStop: () -> Unit,
     onRequestClearDatabase: () -> Unit,
@@ -150,26 +152,67 @@ fun CrawlerScreen(
                     )
                 }
 
-                // Max Pages slider (default 10, range 1-1000)
-                Column {
+                // Max Pages (custom numeric input for any limit + quick slider 1-1000)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Max Pages",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = "${formState.maxPages} pages",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
+                        Column {
+                            Text(
+                                text = "Max Pages",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Slider 1–${CrawlConfig.SLIDER_MAX_PAGES} or custom",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        OutlinedTextField(
+                            value = formState.maxPagesInput,
+                            onValueChange = onMaxPagesInputChange,
+                            modifier = Modifier.width(150.dp),
+                            placeholder = {
+                                Text(
+                                    text = "Custom",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            },
+                            suffix = {
+                                Text(
+                                    text = "pages",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            enabled = !crawlState.isRunning,
+                            singleLine = true,
+                            isError = formState.maxPagesInput.isNotEmpty() &&
+                                CrawlConfig.parseCustomMaxPages(formState.maxPagesInput) == null,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    onCommitMaxPagesInput()
+                                    focusManager.clearFocus()
+                                }
+                            )
                         )
                     }
                     Slider(
-                        value = formState.maxPages.toFloat(),
+                        value = formState.maxPages.coerceIn(
+                            CrawlConfig.MIN_PAGES_LIMIT,
+                            CrawlConfig.SLIDER_MAX_PAGES
+                        ).toFloat(),
                         onValueChange = { onMaxPagesChange(it.roundToInt()) },
-                        valueRange = CrawlConfig.MIN_PAGES_LIMIT.toFloat()..CrawlConfig.MAX_PAGES_LIMIT.toFloat(),
+                        valueRange = CrawlConfig.MIN_PAGES_LIMIT.toFloat()..CrawlConfig.SLIDER_MAX_PAGES.toFloat(),
                         enabled = !crawlState.isRunning
                     )
                 }

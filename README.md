@@ -8,7 +8,7 @@
 
 ### Tab 1: Crawl (Indexer)
 - **Seed URL** input field with default placeholder `https://books.toscrape.com/` (plus a 1-tap demo fill chip).
-- **Max Pages** slider (default `10`, range `1–1000`) and **Polite Delay** slider in seconds (default `1.0s`, range `0.0s–5.0s`).
+- **Max Pages** custom numeric input (any positive number) synced with a quick slider (`1–1000`, default `10`) and **Polite Delay** slider in seconds (default `1.0s`, range `0.0s–5.0s`).
 - **Start / Stop Crawl** button with live progress bar (`visited / maxPages`).
 - Real-time scrolling monospace log console displaying `[CRAWLING]`, `[SAVED]`, and `[SKIPPED]` events.
 - Polite crawling logic on `Dispatchers.IO`:

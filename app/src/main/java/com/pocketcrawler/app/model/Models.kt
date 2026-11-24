@@ -15,16 +15,27 @@ data class CrawlLogEntry(
 
 data class CrawlConfig(
     val seedUrl: String,
-    val maxPages: Int = 10,
+    val maxPages: Int = DEFAULT_MAX_PAGES,
     val politeDelaySeconds: Float = 1.0f,
     val userAgent: String = DEFAULT_USER_AGENT,
     val timeoutMillis: Int = 12_000
 ) {
     companion object {
         const val MIN_PAGES_LIMIT = 1
-        const val MAX_PAGES_LIMIT = 1000
+        const val DEFAULT_MAX_PAGES = 10
+        const val SLIDER_MAX_PAGES = 1000
+        const val MAX_CUSTOM_PAGES_DIGITS = 7
         const val DEFAULT_SEED_PLACEHOLDER = "https://books.toscrape.com/"
         const val DEFAULT_USER_AGENT = "PocketCrawler/1.0 (Android Offline Indexer; +https://github.com/pocket-crawler)"
+
+        fun sanitizeMaxPagesInput(rawInput: String): String {
+            return rawInput.filter { it.isDigit() }.take(MAX_CUSTOM_PAGES_DIGITS)
+        }
+
+        fun parseCustomMaxPages(rawInput: String): Int? {
+            val parsed = sanitizeMaxPagesInput(rawInput).toIntOrNull() ?: return null
+            return if (parsed >= MIN_PAGES_LIMIT) parsed else null
+        }
     }
 }
 
