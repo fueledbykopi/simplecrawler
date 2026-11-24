@@ -81,6 +81,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation("org.jsoup:jsoup:1.18.3")
 
+    // Jetpack Bundled SQLite (guarantees native FTS5 support across all Android devices)
+    implementation(libs.androidx.sqlite)
+    implementation(libs.androidx.sqlite.bundled)
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

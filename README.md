@@ -29,7 +29,7 @@
 
 ## SQLite FTS5 Schema
 
-Managed by `PocketCrawlerDbHelper` (`SQLiteOpenHelper`):
+Managed by `PocketCrawlerDbHelper` via Jetpack's `BundledSQLiteDriver` (`androidx.sqlite:sqlite-bundled`, which bundles SQLite with `SQLITE_ENABLE_FTS5` enabled across all Android devices):
 
 ```sql
 CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5(url UNINDEXED, title, content)
