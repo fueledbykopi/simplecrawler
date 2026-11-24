@@ -41,10 +41,12 @@ data class CrawlConfig(
 
 data class CrawlState(
     val isRunning: Boolean = false,
+    val isRanking: Boolean = false,
     val visitedCount: Int = 0,
     val savedCount: Int = 0,
     val skippedCount: Int = 0,
-    val maxPages: Int = 10,
+    val queuedCount: Int = 0,
+    val maxPages: Int = CrawlConfig.DEFAULT_MAX_PAGES,
     val currentUrl: String = "",
     val statusMessage: String = "Ready to crawl",
     val logs: List<CrawlLogEntry> = emptyList()
@@ -53,11 +55,22 @@ data class CrawlState(
         get() = if (maxPages <= 0) 0f else (visitedCount.toFloat() / maxPages.toFloat()).coerceIn(0f, 1f)
 }
 
+enum class IndexSortMode(val label: String) {
+    TOP_RANKED("Top Ranked"),
+    MOST_RECENT("Most Recent")
+}
+
 data class SavedPage(
     val rowId: Long,
     val url: String,
     val title: String,
-    val content: String
+    val content: String,
+    val pageRank: Double = 0.0,
+    val inLinks: Int = 0,
+    val outLinks: Int = 0,
+    val crawlDepth: Int = 0,
+    val wordCount: Int = 0,
+    val indexedAt: Long = 0L
 )
 
 data class SearchResult(
@@ -65,5 +78,9 @@ data class SearchResult(
     val url: String,
     val title: String,
     val highlightedSnippet: String,
-    val rank: Double
+    val rank: Double,
+    val bm25Score: Double = 0.0,
+    val pageRank: Double = 0.0,
+    val inLinks: Int = 0,
+    val crawlDepth: Int = 0
 )

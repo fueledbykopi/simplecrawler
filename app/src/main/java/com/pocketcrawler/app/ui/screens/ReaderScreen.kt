@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketcrawler.app.ui.util.Formatters
 import com.pocketcrawler.app.viewmodel.ReaderUiState
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -181,6 +182,20 @@ fun ReaderScreen(
                                         text = page.url,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = String.format(
+                                            Locale.US,
+                                            "PageRank %.1f · %d in-links · %d out-links · Depth %d · %d words",
+                                            page.pageRank,
+                                            page.inLinks,
+                                            page.outLinks,
+                                            page.crawlDepth,
+                                            page.wordCount
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
                                     FilledTonalButton(

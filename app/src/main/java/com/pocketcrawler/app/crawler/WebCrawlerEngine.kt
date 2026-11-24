@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,20 +18,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jsoup.HttpStatusException
 import org.jsoup.Jsoup
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Polite Breadth-First Search (BFS) offline web crawler running on [Dispatchers.IO].
+ * Polite Best-First Priority Web Crawler running on [Dispatchers.IO].
  *
- * - Sends a custom `User-Agent` header
- * - Restricts crawling to the same domain as the seed URL
- * - Strips `#` fragments and tracks visited URLs to avoid revisits
- * - Waits `politeDelaySeconds` between page fetches
- * - Uses Jsoup to extract `<title>`, internal links, and clean text (without script/style/noscript/header/footer)
- * - Saves clean text directly into Android's SQLite FTS5 `pages` table
+ * Algorithms & durability:
+ * - **Priority Frontier ([CrawlFrontier])**: Best-first priority queue using online in-link
+ *   popularity (OPIC-style), shallow crawl-depth preference, and clean-URL scoring.
+ * - **Content Deduplication**: SHA-256 content hashing avoids storing exact-duplicate pages
+ *   under alternate URLs while still preserving link edges for PageRank.
+ * - **Durable Index Persistence**: Saves every page, metadata, and link graph atomically into
+ *   SQLite WAL (`pages` FTS5 + `page_meta` + `page_links`).
+ * - **Iterative PageRank**: Periodically recomputes PageRank authority across all saved indexes
+ *   during long crawls and upon completion/cancellation.
  */
 class WebCrawlerEngine(
     private val dbHelper: PocketCrawlerDbHelper,
@@ -89,38 +95,52 @@ class WebCrawlerEngine(
         userAgent: String,
         timeoutMillis: Int
     ) {
-        val queue = ArrayDeque<String>().apply { addLast(seedUrl) }
-        val visited = HashSet<String>()
-        val enqueued = HashSet<String>().apply { add(seedUrl) }
+        val frontier = CrawlFrontier().apply {
+            enqueue(url = seedUrl, depth = 0, isSeed = true)
+        }
+
+        val seenContentHashes = try {
+            HashMap(dbHelper.getExistingContentHashes())
+        } catch (_: Throwable) {
+            HashMap<String, String>()
+        }
 
         var visitedCount = 0
         var savedCount = 0
         var skippedCount = 0
+        var savedSinceLastRank = 0
 
         _state.value = CrawlState(
             isRunning = true,
+            isRanking = false,
             visitedCount = 0,
             savedCount = 0,
             skippedCount = 0,
+            queuedCount = frontier.pendingCount(),
             maxPages = maxPages,
             currentUrl = seedUrl,
-            statusMessage = "Crawling $seedDomain…",
+            statusMessage = "Priority crawling $seedDomain…",
             logs = emptyList()
         )
 
-        try {
-            while (coroutineContextIsActive() && queue.isNotEmpty() && visitedCount < maxPages) {
-                val url = queue.removeFirst()
+        var wasCancelled = false
 
-                if (url in visited) {
-                    skippedCount++
-                    appendLog(CrawlLogType.SKIPPED, "Already visited: $url", visitedCount, savedCount, skippedCount, url)
-                    continue
-                }
+        try {
+            while (coroutineContextIsActive() && frontier.hasPending() && visitedCount < maxPages) {
+                val item = frontier.pollNext() ?: break
+                val url = item.url
 
                 if (!UrlNormalizer.isSameDomain(url, seedDomain)) {
                     skippedCount++
-                    appendLog(CrawlLogType.SKIPPED, "External domain: $url", visitedCount, savedCount, skippedCount, url)
+                    appendLog(
+                        CrawlLogType.SKIPPED,
+                        "External domain: $url",
+                        visitedCount,
+                        savedCount,
+                        skippedCount,
+                        frontier.pendingCount(),
+                        url
+                    )
                     continue
                 }
 
@@ -129,9 +149,16 @@ class WebCrawlerEngine(
                     delay(delayMs)
                 }
 
-                visited.add(url)
                 visitedCount++
-                appendLog(CrawlLogType.CRAWLING, url, visitedCount, savedCount, skippedCount, url)
+                appendLog(
+                    CrawlLogType.CRAWLING,
+                    "[d=${item.depth}] $url",
+                    visitedCount,
+                    savedCount,
+                    skippedCount,
+                    frontier.pendingCount(),
+                    url
+                )
 
                 try {
                     val response = Jsoup.connect(url)
@@ -154,6 +181,7 @@ class WebCrawlerEngine(
                             visitedCount,
                             savedCount,
                             skippedCount,
+                            frontier.pendingCount(),
                             url
                         )
                         continue
@@ -169,11 +197,25 @@ class WebCrawlerEngine(
                                 visitedCount,
                                 savedCount,
                                 skippedCount,
+                                frontier.pendingCount(),
                                 finalUrl
                             )
                             continue
                         }
-                        visited.add(finalUrl)
+                        if (frontier.isVisited(finalUrl)) {
+                            skippedCount++
+                            appendLog(
+                                CrawlLogType.SKIPPED,
+                                "Duplicate redirect — $finalUrl",
+                                visitedCount,
+                                savedCount,
+                                skippedCount,
+                                frontier.pendingCount(),
+                                finalUrl
+                            )
+                            continue
+                        }
+                        frontier.markVisited(finalUrl)
                     }
 
                     val extracted = HtmlContentExtractor.extract(
@@ -181,6 +223,12 @@ class WebCrawlerEngine(
                         baseUrl = finalUrl,
                         seedDomain = seedDomain
                     )
+
+                    // Enqueue internal links into Priority Frontier (boosts in-link priority even for queued URLs)
+                    val nextDepth = item.depth + 1
+                    for (link in extracted.internalLinks) {
+                        frontier.enqueue(url = link, depth = nextDepth, isSeed = false)
+                    }
 
                     if (extracted.cleanText.isBlank()) {
                         skippedCount++
@@ -190,31 +238,67 @@ class WebCrawlerEngine(
                             visitedCount,
                             savedCount,
                             skippedCount,
+                            frontier.pendingCount(),
                             finalUrl
                         )
                     } else {
-                        dbHelper.savePage(
-                            url = finalUrl,
-                            title = extracted.title,
-                            content = extracted.cleanText
-                        )
-                        savedCount++
-                        onDatabaseMutated()
-                        appendLog(
-                            CrawlLogType.SAVED,
-                            "${extracted.title} ($finalUrl)",
-                            visitedCount,
-                            savedCount,
-                            skippedCount,
-                            finalUrl
-                        )
-                    }
+                        val contentHash = sha256Hex(extracted.cleanText)
+                        val existingOwner = seenContentHashes[contentHash]
+                        if (existingOwner != null && existingOwner != finalUrl) {
+                            // Duplicate content under another URL: still persist link graph for PageRank
+                            dbHelper.recordLinks(finalUrl, extracted.internalLinks)
+                            skippedCount++
+                            appendLog(
+                                CrawlLogType.SKIPPED,
+                                "Duplicate content of $existingOwner — $finalUrl",
+                                visitedCount,
+                                savedCount,
+                                skippedCount,
+                                frontier.pendingCount(),
+                                finalUrl
+                            )
+                        } else {
+                            dbHelper.savePage(
+                                url = finalUrl,
+                                title = extracted.title,
+                                content = extracted.cleanText,
+                                domain = seedDomain,
+                                contentHash = contentHash,
+                                crawlDepth = item.depth,
+                                outboundLinks = extracted.internalLinks
+                            )
+                            seenContentHashes[contentHash] = finalUrl
+                            savedCount++
+                            savedSinceLastRank++
+                            onDatabaseMutated()
+                            appendLog(
+                                CrawlLogType.SAVED,
+                                "${extracted.title} ($finalUrl)",
+                                visitedCount,
+                                savedCount,
+                                skippedCount,
+                                frontier.pendingCount(),
+                                finalUrl
+                            )
 
-                    // Enqueue unvisited internal links on the same domain
-                    for (link in extracted.internalLinks) {
-                        if (link !in visited && link !in enqueued) {
-                            enqueued.add(link)
-                            queue.addLast(link)
+                            // Periodically refresh PageRank during large background crawls
+                            if (savedSinceLastRank >= RANK_REFRESH_INTERVAL) {
+                                savedSinceLastRank = 0
+                                _state.update {
+                                    it.copy(
+                                        isRanking = true,
+                                        statusMessage = "Ranking indexes (PageRank)…"
+                                    )
+                                }
+                                dbHelper.recomputePageRanks()
+                                onDatabaseMutated()
+                                _state.update {
+                                    it.copy(
+                                        isRanking = false,
+                                        statusMessage = "Priority crawling $seedDomain…"
+                                    )
+                                }
+                            }
                         }
                     }
                 } catch (ce: CancellationException) {
@@ -227,6 +311,7 @@ class WebCrawlerEngine(
                         visitedCount,
                         savedCount,
                         skippedCount,
+                        frontier.pendingCount(),
                         url
                     )
                 } catch (ioErr: IOException) {
@@ -237,6 +322,7 @@ class WebCrawlerEngine(
                         visitedCount,
                         savedCount,
                         skippedCount,
+                        frontier.pendingCount(),
                         url
                     )
                 } catch (t: Throwable) {
@@ -247,33 +333,53 @@ class WebCrawlerEngine(
                         visitedCount,
                         savedCount,
                         skippedCount,
+                        frontier.pendingCount(),
                         url
                     )
                 }
             }
-
-            _state.update {
-                it.copy(
-                    isRunning = false,
-                    visitedCount = visitedCount,
-                    savedCount = savedCount,
-                    skippedCount = skippedCount,
-                    currentUrl = "",
-                    statusMessage = "Finished: saved $savedCount of $visitedCount visited page(s)"
-                )
-            }
         } catch (ce: CancellationException) {
-            _state.update {
-                it.copy(
-                    isRunning = false,
-                    visitedCount = visitedCount,
-                    savedCount = savedCount,
-                    skippedCount = skippedCount,
-                    currentUrl = "",
-                    statusMessage = "Stopped by user ($savedCount page(s) saved)"
-                )
-            }
+            wasCancelled = true
             throw ce
+        } finally {
+            // Always run final PageRank over all saved indexes even when stopped early
+            withContext(NonCancellable) {
+                var rankedTotal = 0
+                if (savedSinceLastRank > 0 || savedCount > 0) {
+                    _state.update {
+                        it.copy(
+                            isRanking = true,
+                            statusMessage = "Computing PageRank across all indexes…"
+                        )
+                    }
+                    try {
+                        rankedTotal = dbHelper.recomputePageRanks()
+                        onDatabaseMutated()
+                    } catch (_: Throwable) {
+                        // Best-effort ranking on shutdown
+                    }
+                }
+
+                val rankSuffix = if (rankedTotal > 0) " · Ranked $rankedTotal index(es)" else ""
+                val finalMessage = if (wasCancelled) {
+                    "Stopped by user ($savedCount page(s) saved$rankSuffix)"
+                } else {
+                    "Finished: saved $savedCount of $visitedCount visited$rankSuffix"
+                }
+
+                _state.update {
+                    it.copy(
+                        isRunning = false,
+                        isRanking = false,
+                        visitedCount = visitedCount,
+                        savedCount = savedCount,
+                        skippedCount = skippedCount,
+                        queuedCount = 0,
+                        currentUrl = "",
+                        statusMessage = finalMessage
+                    )
+                }
+            }
         }
     }
 
@@ -285,6 +391,7 @@ class WebCrawlerEngine(
         visited: Int,
         saved: Int,
         skipped: Int,
+        queued: Int,
         currentUrl: String
     ) {
         val entry = newLog(type, message)
@@ -296,6 +403,7 @@ class WebCrawlerEngine(
                 visitedCount = visited,
                 savedCount = saved,
                 skippedCount = skipped,
+                queuedCount = queued,
                 currentUrl = currentUrl,
                 logs = updatedLogs
             )
@@ -310,7 +418,19 @@ class WebCrawlerEngine(
         )
     }
 
+    private fun sha256Hex(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            sb.append(HEX_CHARS[(b.toInt() ushr 4) and 0x0F])
+            sb.append(HEX_CHARS[b.toInt() and 0x0F])
+        }
+        return sb.toString()
+    }
+
     companion object {
         private const val MAX_LOG_ENTRIES = 200
+        private const val RANK_REFRESH_INTERVAL = 25
+        private const val HEX_CHARS = "0123456789abcdef"
     }
 }

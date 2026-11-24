@@ -177,6 +177,9 @@ fun PocketCrawlerApp(viewModel: PocketCrawlerViewModel) {
                         searchState = searchState,
                         indexedCount = indexedCount,
                         onQueryChange = viewModel::onSearchQueryChange,
+                        onSortModeChange = viewModel::selectIndexSortMode,
+                        onLoadMorePages = viewModel::loadMoreIndexedPages,
+                        onRecomputeRanks = viewModel::recomputeRanks,
                         onOpenPage = viewModel::openPage,
                         onGoToCrawler = { viewModel.selectTab(AppTab.CRAWL) },
                         modifier = contentModifier

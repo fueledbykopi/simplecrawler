@@ -310,13 +310,22 @@ fun CrawlerScreen(
                     )
                 }
 
-                LinearProgressIndicator(
-                    progress = { crawlState.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp),
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
+                if (crawlState.isRanking) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        progress = { crawlState.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -398,7 +407,7 @@ fun CrawlerScreen(
                             )
                         }
                         Text(
-                            text = "Saved: ${crawlState.savedCount} · Skipped: ${crawlState.skippedCount}",
+                            text = "Saved: ${crawlState.savedCount} · Queue: ${crawlState.queuedCount} · Skip: ${crawlState.skippedCount}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

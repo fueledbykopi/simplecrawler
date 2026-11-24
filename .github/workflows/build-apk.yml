@@ -1,11 +1,15 @@
-name: Build Debug APK
+name: Build & Release APK
 
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -27,11 +31,39 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: Build Release & Debug APKs
+        run: ./gradlew assembleRelease assembleDebug
 
-      - name: Upload Debug APK
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocket-crawler-release-apk
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: pocket-crawler-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          RELEASE_APK="$(ls app/build/outputs/apk/release/*.apk | head -n 1)"
+          OUT_APK="pocket-crawler-${TAG}.apk"
+          cp "${RELEASE_APK}" "${OUT_APK}"
+          cat <<'EOF' > release_notes.md
+          ### Highlights
+          - **Best-First Priority Crawler**: Online in-link priority frontier with shallow-depth & clean-URL scoring and SHA-256 content deduplication.
+          - **Background Crawling**: Android Foreground Service (`dataSync`) with live progress notification and direct Stop button.
+          - **Save All Indexes**: Durable SQLite WAL schema (`pages` FTS5 + `page_meta` + `page_links`) with paginated browsing of all saved indexes.
+          - **Rank Indexes (PageRank + BM25)**: Iterative PageRank over the link graph fused with field-weighted FTS5 BM25 (title 5x, body 1x), plus Top Ranked / Most Recent sorting and 1-tap Re-rank.
+          - **Custom Max Pages**: Numeric input supporting any page count alongside the quick slider.
+          EOF
+          sed -i 's/^          //' release_notes.md
+          gh release create "${TAG}" "${OUT_APK}" \
+            --title "Pocket Crawler ${TAG}" \
+            --notes-file release_notes.md

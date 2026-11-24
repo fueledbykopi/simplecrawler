@@ -7,8 +7,10 @@ import com.pocketcrawler.app.PocketCrawlerApplication
 import com.pocketcrawler.app.data.search.FtsQueryBuilder
 import com.pocketcrawler.app.model.CrawlConfig
 import com.pocketcrawler.app.model.CrawlState
+import com.pocketcrawler.app.model.IndexSortMode
 import com.pocketcrawler.app.model.SavedPage
 import com.pocketcrawler.app.model.SearchResult
+import com.pocketcrawler.app.service.CrawlerForegroundService
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,8 +38,10 @@ data class CrawlerFormState(
 data class SearchUiState(
     val query: String = "",
     val results: List<SearchResult> = emptyList(),
-    val recentPages: List<SavedPage> = emptyList(),
+    val indexedPages: List<SavedPage> = emptyList(),
+    val sortMode: IndexSortMode = IndexSortMode.TOP_RANKED,
     val isSearching: Boolean = false,
+    val isReRanking: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -66,6 +70,9 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
     val indexedCount: StateFlow<Int> = _indexedCount.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
+    private val _indexSortMode = MutableStateFlow(IndexSortMode.TOP_RANKED)
+    private val _indexedPageLimit = MutableStateFlow(PAGE_BATCH_SIZE)
+
     private val _searchUiState = MutableStateFlow(SearchUiState())
     val searchUiState: StateFlow<SearchUiState> = _searchUiState.asStateFlow()
 
@@ -82,12 +89,27 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
 
     private fun observeDatabaseStats() {
         viewModelScope.launch {
-            app.dbVersion.collect {
+            combine(
+                app.dbVersion,
+                _indexSortMode,
+                _indexedPageLimit
+            ) { _, sortMode, limit ->
+                sortMode to limit
+            }.collect { (sortMode, limit) ->
                 try {
                     val count = dbHelper.getIndexedPageCount()
-                    val recent = dbHelper.getRecentPages(limit = 30)
+                    val pages = dbHelper.getIndexedPages(
+                        sortMode = sortMode,
+                        limit = limit,
+                        offset = 0
+                    )
                     _indexedCount.value = count
-                    _searchUiState.update { it.copy(recentPages = recent) }
+                    _searchUiState.update {
+                        it.copy(
+                            indexedPages = pages,
+                            sortMode = sortMode
+                        )
+                    }
                 } catch (_: Throwable) {
                     // Ignore transient DB errors
                 }
@@ -110,7 +132,7 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
 
                 _searchUiState.update { it.copy(isSearching = true, errorMessage = null) }
                 try {
-                    val matches = dbHelper.searchPages(query)
+                    val matches = dbHelper.searchPages(query, limit = SEARCH_RESULT_LIMIT)
                     _searchUiState.update {
                         it.copy(results = matches, isSearching = false, errorMessage = null)
                     }
@@ -142,7 +164,7 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     // -------------------------------------------------------------------------
-    // Tab 1: Crawler Actions
+    // Tab 1: Background Priority Crawler Actions
     // -------------------------------------------------------------------------
 
     fun updateSeedUrl(url: String) {
@@ -188,7 +210,7 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
 
     fun toggleStartStopCrawl() {
         if (crawlState.value.isRunning) {
-            crawlerEngine.stopCrawl()
+            CrawlerForegroundService.stopCrawl(app)
         } else {
             val form = _crawlerForm.value
             val effectiveSeed = form.seedUrl.trim().ifEmpty { CrawlConfig.DEFAULT_SEED_PLACEHOLDER }
@@ -203,8 +225,9 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
-            crawlerEngine.startCrawl(
-                CrawlConfig(
+            CrawlerForegroundService.startCrawl(
+                context = app,
+                config = CrawlConfig(
                     seedUrl = effectiveSeed,
                     maxPages = effectiveMaxPages,
                     politeDelaySeconds = form.politeDelaySeconds
@@ -214,12 +237,39 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     // -------------------------------------------------------------------------
-    // Tab 2: Offline Search & Reader View
+    // Tab 2: Offline Search, Ranking & Reader View
     // -------------------------------------------------------------------------
 
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
         _searchUiState.update { it.copy(query = query) }
+    }
+
+    fun selectIndexSortMode(mode: IndexSortMode) {
+        if (_indexSortMode.value != mode) {
+            _indexSortMode.value = mode
+            _indexedPageLimit.value = PAGE_BATCH_SIZE
+        }
+    }
+
+    fun loadMoreIndexedPages() {
+        _indexedPageLimit.update { it + PAGE_BATCH_SIZE }
+    }
+
+    fun recomputeRanks() {
+        if (_searchUiState.value.isReRanking) return
+        viewModelScope.launch {
+            _searchUiState.update { it.copy(isReRanking = true) }
+            try {
+                val ranked = dbHelper.recomputePageRanks()
+                app.notifyDatabaseChanged()
+                _snackbarMessages.tryEmit("Ranked $ranked saved index(es) with PageRank")
+            } catch (t: Throwable) {
+                _snackbarMessages.tryEmit("Ranking failed: ${t.message ?: "unknown error"}")
+            } finally {
+                _searchUiState.update { it.copy(isReRanking = false) }
+            }
+        }
     }
 
     fun openPage(rowId: Long, fromQuery: String = "") {
@@ -252,11 +302,12 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
 
     fun clearDatabase() {
         if (crawlState.value.isRunning) {
-            crawlerEngine.stopCrawl()
+            CrawlerForegroundService.stopCrawl(app)
         }
         viewModelScope.launch {
             try {
                 dbHelper.clearDatabase()
+                _indexedPageLimit.value = PAGE_BATCH_SIZE
                 app.notifyDatabaseChanged()
                 if (_readerUiState.value.page != null) {
                     closeReader()
@@ -266,5 +317,10 @@ class PocketCrawlerViewModel(application: Application) : AndroidViewModel(applic
                 _snackbarMessages.tryEmit("Failed to clear database: ${t.message ?: "unknown error"}")
             }
         }
+    }
+
+    companion object {
+        private const val PAGE_BATCH_SIZE = 100
+        private const val SEARCH_RESULT_LIMIT = 100
     }
 }

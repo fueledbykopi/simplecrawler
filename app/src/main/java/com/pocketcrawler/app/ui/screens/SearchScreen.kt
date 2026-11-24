@@ -15,43 +15,56 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Leaderboard
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.pocketcrawler.app.model.IndexSortMode
 import com.pocketcrawler.app.model.SavedPage
 import com.pocketcrawler.app.model.SearchResult
 import com.pocketcrawler.app.ui.util.Formatters
 import com.pocketcrawler.app.viewmodel.SearchUiState
+import java.util.Locale
 
 @Composable
 fun SearchScreen(
     searchState: SearchUiState,
     indexedCount: Int,
     onQueryChange: (String) -> Unit,
+    onSortModeChange: (IndexSortMode) -> Unit,
+    onLoadMorePages: () -> Unit,
+    onRecomputeRanks: () -> Unit,
     onOpenPage: (Long, String) -> Unit,
     onGoToCrawler: () -> Unit,
     modifier: Modifier = Modifier
@@ -95,7 +108,7 @@ fun SearchScreen(
             )
         )
 
-        if (searchState.isSearching) {
+        if (searchState.isSearching || searchState.isReRanking) {
             Spacer(modifier = Modifier.height(4.dp))
             LinearProgressIndicator(
                 modifier = Modifier
@@ -119,10 +132,12 @@ fun SearchScreen(
             )
             Text(
                 text = when {
+                    searchState.isReRanking ->
+                        "Recomputing PageRank across $indexedCount saved index(es)…"
                     searchState.query.isNotBlank() ->
-                        "${searchState.results.size} match(es) ranked by SQLite FTS5 relevance"
+                        "${searchState.results.size} match(es) ranked by BM25 + PageRank"
                     indexedCount > 0 ->
-                        "Offline SQLite FTS5 ready · $indexedCount page(s) indexed"
+                        "Offline FTS5 + PageRank · $indexedCount index(es) saved"
                     else ->
                         "Offline SQLite FTS5 index is empty"
                 },
@@ -140,7 +155,7 @@ fun SearchScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         when {
             indexedCount == 0 -> {
@@ -148,6 +163,48 @@ fun SearchScreen(
             }
 
             searchState.query.isBlank() -> {
+                // Sort & Re-rank toolbar for all saved indexes
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IndexSortMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = searchState.sortMode == mode,
+                                onClick = { onSortModeChange(mode) },
+                                label = {
+                                    Text(
+                                        text = mode.label,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    AssistChip(
+                        onClick = onRecomputeRanks,
+                        enabled = !searchState.isReRanking,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "Re-rank",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -155,16 +212,33 @@ fun SearchScreen(
                 ) {
                     item {
                         Text(
-                            text = "Indexed Offline Pages (${searchState.recentPages.size})",
+                            text = "Saved Indexes (${searchState.indexedPages.size} of $indexedCount)",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    items(searchState.recentPages, key = { it.rowId }) { page ->
+                    itemsIndexed(
+                        items = searchState.indexedPages,
+                        key = { _, page -> page.rowId }
+                    ) { index, page ->
                         IndexedPageCard(
+                            rankPosition = index + 1,
                             page = page,
                             onClick = { onOpenPage(page.rowId, "") }
                         )
+                    }
+                    if (searchState.indexedPages.size < indexedCount) {
+                        item {
+                            OutlinedButton(
+                                onClick = onLoadMorePages,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    text = "Load More Indexes (${searchState.indexedPages.size} / $indexedCount)"
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -202,8 +276,12 @@ fun SearchScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 20.dp)
                 ) {
-                    items(searchState.results, key = { it.rowId }) { result ->
+                    itemsIndexed(
+                        items = searchState.results,
+                        key = { _, result -> result.rowId }
+                    ) { index, result ->
                         SearchResultCard(
+                            rankPosition = index + 1,
                             result = result,
                             onClick = { onOpenPage(result.rowId, searchState.query) }
                         )
@@ -215,7 +293,52 @@ fun SearchScreen(
 }
 
 @Composable
+private fun RankBadge(
+    rankPosition: Int,
+    scoreLabel: String,
+    secondaryLabel: String
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Leaderboard,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "#$rankPosition · $scoreLabel",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+        Text(
+            text = secondaryLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun SearchResultCard(
+    rankPosition: Int,
     result: SearchResult,
     onClick: () -> Unit
 ) {
@@ -237,6 +360,19 @@ private fun SearchResultCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
+            RankBadge(
+                rankPosition = rankPosition,
+                scoreLabel = String.format(Locale.US, "Score %.1f", result.rank),
+                secondaryLabel = String.format(
+                    Locale.US,
+                    "PR %.1f · %d in-link(s)",
+                    result.pageRank,
+                    result.inLinks
+                )
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             Text(
                 text = result.title,
                 style = MaterialTheme.typography.titleMedium,
@@ -270,6 +406,7 @@ private fun SearchResultCard(
 
 @Composable
 private fun IndexedPageCard(
+    rankPosition: Int,
     page: SavedPage,
     onClick: () -> Unit
 ) {
@@ -284,6 +421,14 @@ private fun IndexedPageCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
+            RankBadge(
+                rankPosition = rankPosition,
+                scoreLabel = String.format(Locale.US, "PR %.1f", page.pageRank),
+                secondaryLabel = "${page.inLinks} in · ${page.outLinks} out · d${page.crawlDepth} · ${page.wordCount}w"
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             Text(
                 text = page.title,
                 style = MaterialTheme.typography.titleMedium,
@@ -336,7 +481,7 @@ private fun EmptyIndexPlaceholder(onGoToCrawler: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Switch to the Crawl tab to index a website, then search every word here completely offline.",
+                text = "Switch to the Crawl tab to index a website in the background, then search and browse ranked pages here completely offline.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
